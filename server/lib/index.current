@@ -1,0 +1,75 @@
+'use strict';
+
+import Primus from 'primus';
+import http from 'http';
+const { Pool, Client } = require('pg')
+
+// const { graphql } = require('graphql')
+// const { createPostGraphQLSchema, withPostGraphQLContext } = require('graphile-build')
+const { createPostGraphQLSchema, withPostGraphQLContext } = require('postgraphql');
+// import createPostGraphQLSchema from 'graphile-build'
+
+// Create Postgres connection options
+var pgOpts = {
+  database: 'pop',
+  user: 'itsjwm',
+  password: 'itsjwm',
+  host: 'localhost',
+  max: 20, // set pool max size to 20
+  min: 2, // set min pool size to 4
+  idleTimeoutMillis: 1000, // close idle clients after 1 second
+  connectionTimeoutMillis: 1000, // return an error after 1 second if connection could not be established
+}
+
+const pool = new Pool({
+  user: 'itsjwm',
+  host: 'localhost',
+  database: 'pop',
+  password: 'itsjwm',
+})
+
+//  'postgres://itsjwm:itsjwm@localhost:5432/pop',
+const graphqlSchema = createPostGraphQLSchema(
+  pool,
+  'public',
+  {
+    graphiql: true,
+    watchPg: true
+  }
+);
+
+console.log("pool connected")
+
+async function runQL (schema, query, variables ) {
+  console.log("runQL:",query)
+
+  const result = await withPostGraphQLContext(pool,
+    async (context) => {
+      return await graphql(
+          graphqlSchema,
+          query,
+          null,
+          {...context},
+          null,
+          'allThings'
+          );
+  });
+}
+
+var server = http.createServer();
+var primus = new Primus(server, { transformer: 'uws' });
+
+primus.on('error', function error(err) {
+	console.error('ERROR', err.stack);
+});
+
+primus.on('connection', function (socket) {
+	socket.on('data', function ping(message) {
+		console.log('recieved a new message', message);
+    var result = runQL(graphqlSchema, '{ allServers { edges { node { id } } }   }', '' )
+    console.log("result:", result)
+		socket.write({ data: result });
+	});
+});
+
+server.listen(8081);

@@ -1,0 +1,78 @@
+'use strict';
+
+import Primus from 'primus'
+import http from 'http'
+const { withPostGraphQLContext } = require('postgraphile');
+
+import Pool from 'pg-pool'
+var pool = new Pool({
+  database: 'pop',
+  user: 'itsjwm',
+  password: 'itsjwm',
+  port: 5432,
+  ssl: false,
+  max: 20, // set pool max size to 20
+  min: 2, // set min pool size to 4
+  idleTimeoutMillis: 1000, // close idle clients after 1 second
+  connectionTimeoutMillis: 1000, // return an error after 1 second if connection could not be established
+})
+
+import { graphql } from 'graphql'
+
+var server = http.createServer(postgrphile('postgres://itsjwm:itsjwm@localhost:5432/pop', 'public', {graphiql: true, watchPg: true}));
+var primus = new Primus(server, { transformer: 'uws' });
+
+// Catch errors from Primus
+primus.on('error', function error(err) {
+	console.error('ERROR', err.stack);
+});
+
+// Create the postgrphile schema that's used to get data
+var myPostGraphQLSchema
+createPostGraphQLSchema(pool, 'public', {graphiql: true, watchPG: true})
+	.then(schema => {
+			console.log("Schema created",schema)
+			myPostGraphQLSchema = schema;
+	})
+	.catch( error=> {
+			console.log("schema -> error")
+	})
+
+primus.on('connection', function (socket) {
+	console.log("connection");
+	socket.on('data', function ping(message) {
+		console.log('new message:', message);
+		var msg = process_graphql_request(message, socket);
+	});
+});
+
+server.listen(8081); // And listen on the HTTP server
+console.log("Listening on 8081");
+//		socket.write({ data: message });
+
+function process_graphql_request (message)
+{
+	var variables = null;
+	var operationName ='query';
+	const result = withPostGraphQLContext(
+	  {
+	    pgPool: pool,
+	//    jwtToken: '...',
+	//    jwtSecret: '...',
+	    pgDefaultRole: 'itsjwm'
+	  },
+	  async context => {
+	    // You execute your GraphQL query in this function with the provided `context` object.
+	    // The `context` object will not work for a GraphQL execution outside of this function.
+	    return await graphql(
+	      myPostGraphQLSchema, // This is the schema we created with `createPostGraphQLSchema`.
+				'{ allServers { edges { node { id } } }   }',
+	      null,
+	      { ...context }, // Here we use the `context` object that gets passed to this callback.
+	      variables,
+	      operationName
+	    )
+	  },
+	)
+	console.log("context:", result)
+}
